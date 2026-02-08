@@ -5,10 +5,11 @@ import { auth, db } from "@/lib/firebase";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  deleteUser,
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
-import { ref, set, get } from "firebase/database";
+import { ref, set, get, remove } from "firebase/database";
 
 type TestResult = {
   name: string;
@@ -145,18 +146,22 @@ export default function FirebaseTestPage() {
       });
     }
 
-    // Test 6: Sign Out
-    addResult({ name: "Auth: Sign Out", status: "pending", message: "Logge aus..." });
+    // Test 6: Cleanup — DB-Daten löschen + User löschen
+    addResult({ name: "Cleanup", status: "pending", message: "Räume auf..." });
     try {
-      await signOut(auth);
+      await remove(ref(db, `connection-test/${uid}`));
+      const user = auth.currentUser;
+      if (user) {
+        await deleteUser(user);
+      }
       addResult({
-        name: "Auth: Sign Out",
+        name: "Cleanup",
         status: "success",
-        message: "Erfolgreich ausgeloggt",
+        message: "Testuser und DB-Daten gelöscht",
       });
     } catch (e) {
       addResult({
-        name: "Auth: Sign Out",
+        name: "Cleanup",
         status: "error",
         message: String(e),
       });
