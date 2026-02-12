@@ -9,15 +9,27 @@ import {
   query,
   orderByChild,
   equalTo,
+  runTransaction,
   type Unsubscribe,
 } from "firebase/database";
-import { db } from "@/lib/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+import { db, storage } from "@/lib/firebase";
 import { generateInviteCode, getToday, getYesterday } from "@/lib/utils";
 import type {
   Household,
   UserProfile,
   Chore,
   ChoreHistoryEntry,
+  HouseholdRole,
+  Reward,
+  Redemption,
+  RedemptionStatus,
+  PocketMoneyEntry,
+  XpTransfer,
 } from "@/types";
 
 // ─── User Profile ───────────────────────────────────────────────
@@ -79,7 +91,7 @@ export async function createHousehold(
   };
 
   await set(householdRef, household);
-  await set(ref(db, `householdMembers/${householdId}/${uid}`), true);
+  await set(ref(db, `householdMembers/${householdId}/${uid}`), "admin");
   await update(ref(db, `userProfiles/${uid}`), { householdId });
 
   return householdId;
@@ -102,7 +114,7 @@ export async function joinHousehold(
     householdId = child.key!;
   });
 
-  await set(ref(db, `householdMembers/${householdId}/${uid}`), true);
+  await set(ref(db, `householdMembers/${householdId}/${uid}`), "member");
   await update(ref(db, `userProfiles/${uid}`), { householdId });
 
   return householdId;
@@ -129,11 +141,26 @@ export function subscribeToHousehold(
 
 export function subscribeToHouseholdMembers(
   householdId: string,
-  callback: (members: Record<string, boolean>) => void
+  createdBy: string,
+  callback: (members: Record<string, HouseholdRole>) => void
 ): Unsubscribe {
   const membersRef = ref(db, `householdMembers/${householdId}`);
   return onValue(membersRef, (snapshot) => {
-    callback(snapshot.exists() ? snapshot.val() : {});
+    if (!snapshot.exists()) {
+      callback({});
+      return;
+    }
+    const raw = snapshot.val() as Record<string, boolean | HouseholdRole>;
+    const mapped: Record<string, HouseholdRole> = {};
+    for (const [uid, value] of Object.entries(raw)) {
+      if (value === "admin" || value === "member") {
+        mapped[uid] = value;
+      } else {
+        // Backwards compatibility: true → derive role from createdBy
+        mapped[uid] = uid === createdBy ? "admin" : "member";
+      }
+    }
+    callback(mapped);
   });
 }
 
@@ -166,11 +193,26 @@ export async function deleteChore(householdId: string, choreId: string) {
   await remove(ref(db, `chores/${householdId}/${choreId}`));
 }
 
+export async function uploadChorePhoto(
+  householdId: string,
+  choreId: string,
+  file: File
+): Promise<string> {
+  const fileRef = storageRef(
+    storage,
+    `chore-photos/${householdId}/${choreId}_${Date.now()}.jpg`
+  );
+  await uploadBytes(fileRef, file);
+  return getDownloadURL(fileRef);
+}
+
 export async function completeChore(
   householdId: string,
   choreId: string,
   uid: string,
-  userName: string
+  userName: string,
+  completionNote?: string,
+  photoUrl?: string
 ) {
   // Get chore data
   const choreSnapshot = await get(ref(db, `chores/${householdId}/${choreId}`));
@@ -178,11 +220,14 @@ export async function completeChore(
   const choreData = choreSnapshot.val() as Omit<Chore, "id">;
 
   // Update chore status
-  await update(ref(db, `chores/${householdId}/${choreId}`), {
+  const choreUpdate: Record<string, unknown> = {
     status: "done",
     completedAt: Date.now(),
     completedBy: uid,
-  });
+  };
+  if (completionNote) choreUpdate.completionNote = completionNote;
+  if (photoUrl) choreUpdate.photoUrl = photoUrl;
+  await update(ref(db, `chores/${householdId}/${choreId}`), choreUpdate);
 
   // Add history entry
   const historyRef = push(ref(db, `choreHistory/${householdId}`));
@@ -193,6 +238,8 @@ export async function completeChore(
     completedByName: userName,
     points: choreData.points,
     completedAt: Date.now(),
+    ...(completionNote ? { completionNote } : {}),
+    ...(photoUrl ? { photoUrl } : {}),
   };
   await set(historyRef, historyEntry);
 
@@ -224,6 +271,24 @@ export function subscribeToChores(
       chores.push({ id: child.key!, ...child.val() } as Chore);
     });
     callback(chores);
+  });
+}
+
+export function subscribeToChoreHistory(
+  householdId: string,
+  callback: (entries: ChoreHistoryEntry[]) => void
+): Unsubscribe {
+  const historyRef = ref(db, `choreHistory/${householdId}`);
+  return onValue(historyRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback([]);
+      return;
+    }
+    const entries: ChoreHistoryEntry[] = [];
+    snapshot.forEach((child) => {
+      entries.push({ id: child.key!, ...child.val() } as ChoreHistoryEntry);
+    });
+    callback(entries);
   });
 }
 
@@ -266,4 +331,258 @@ export async function getMemberProfiles(
     if (profile) profiles.push(profile);
   }
   return profiles;
+}
+
+// ─── Rewards ────────────────────────────────────────────────────
+
+export async function createReward(
+  householdId: string,
+  reward: Omit<Reward, "id" | "createdAt" | "active">
+) {
+  const rewardRef = push(ref(db, `rewards/${householdId}`));
+  await set(rewardRef, {
+    ...reward,
+    createdAt: Date.now(),
+    active: true,
+  });
+  return rewardRef.key!;
+}
+
+export async function updateReward(
+  householdId: string,
+  rewardId: string,
+  updates: Partial<Pick<Reward, "title" | "description" | "cost" | "icon">>
+) {
+  await update(ref(db, `rewards/${householdId}/${rewardId}`), updates);
+}
+
+export async function deleteReward(householdId: string, rewardId: string) {
+  await update(ref(db, `rewards/${householdId}/${rewardId}`), { active: false });
+}
+
+export function subscribeToRewards(
+  householdId: string,
+  callback: (rewards: Reward[]) => void
+): Unsubscribe {
+  const rewardsRef = ref(db, `rewards/${householdId}`);
+  return onValue(rewardsRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback([]);
+      return;
+    }
+    const rewards: Reward[] = [];
+    snapshot.forEach((child) => {
+      rewards.push({ id: child.key!, ...child.val() } as Reward);
+    });
+    callback(rewards);
+  });
+}
+
+export async function redeemReward(
+  householdId: string,
+  reward: Reward,
+  uid: string,
+  userName: string
+) {
+  const pointsRef = ref(db, `userProfiles/${uid}/totalPoints`);
+
+  // Transaction to atomically deduct points
+  const result = await runTransaction(pointsRef, (currentPoints: number | null) => {
+    const points = currentPoints ?? 0;
+    if (points < reward.cost) {
+      return; // Abort transaction
+    }
+    return points - reward.cost;
+  });
+
+  if (!result.committed) {
+    throw new Error("Nicht genügend Punkte");
+  }
+
+  // Create redemption entry
+  const redemptionRef = push(ref(db, `redemptions/${householdId}`));
+  const redemption: Omit<Redemption, "id"> = {
+    rewardId: reward.id,
+    rewardTitle: reward.title,
+    redeemedBy: uid,
+    redeemedByName: userName,
+    cost: reward.cost,
+    redeemedAt: Date.now(),
+    status: "pending",
+  };
+  await set(redemptionRef, redemption);
+  return redemptionRef.key!;
+}
+
+export function subscribeToRedemptions(
+  householdId: string,
+  callback: (redemptions: Redemption[]) => void
+): Unsubscribe {
+  const redemptionsRef = ref(db, `redemptions/${householdId}`);
+  return onValue(redemptionsRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback([]);
+      return;
+    }
+    const redemptions: Redemption[] = [];
+    snapshot.forEach((child) => {
+      redemptions.push({ id: child.key!, ...child.val() } as Redemption);
+    });
+    callback(redemptions);
+  });
+}
+
+export async function updateRedemptionStatus(
+  householdId: string,
+  redemptionId: string,
+  status: RedemptionStatus
+) {
+  // Get the redemption to check if we need to refund
+  const redemptionSnapshot = await get(
+    ref(db, `redemptions/${householdId}/${redemptionId}`)
+  );
+  if (!redemptionSnapshot.exists()) throw new Error("Einlösung nicht gefunden");
+  const redemption = redemptionSnapshot.val() as Omit<Redemption, "id">;
+
+  // Update status
+  await update(ref(db, `redemptions/${householdId}/${redemptionId}`), { status });
+
+  // Refund points on rejection
+  if (status === "rejected") {
+    const pointsRef = ref(db, `userProfiles/${redemption.redeemedBy}/totalPoints`);
+    await runTransaction(pointsRef, (currentPoints: number | null) => {
+      return (currentPoints ?? 0) + redemption.cost;
+    });
+  }
+}
+
+// ─── Pocket Money ────────────────────────────────────────────────
+
+export async function setPocketMoneyRate(householdId: string, rate: number) {
+  await update(ref(db, `households/${householdId}`), { pocketMoneyRate: rate });
+}
+
+export async function exchangeXpForMoney(
+  householdId: string,
+  uid: string,
+  userName: string,
+  xpAmount: number
+) {
+  // Get household rate
+  const householdSnapshot = await get(ref(db, `households/${householdId}`));
+  if (!householdSnapshot.exists()) throw new Error("Haushalt nicht gefunden");
+  const household = householdSnapshot.val() as Omit<Household, "id">;
+  const rate = household.pocketMoneyRate;
+  if (!rate) throw new Error("Kein Wechselkurs eingestellt");
+
+  const moneyAmount = Math.round(xpAmount * rate);
+
+  // Atomically deduct XP
+  const pointsRef = ref(db, `userProfiles/${uid}/totalPoints`);
+  const result = await runTransaction(pointsRef, (currentPoints: number | null) => {
+    const points = currentPoints ?? 0;
+    if (points < xpAmount) return; // Abort
+    return points - xpAmount;
+  });
+
+  if (!result.committed) {
+    throw new Error("Nicht genügend Punkte");
+  }
+
+  // Add pocket money to user
+  const pocketMoneyRef = ref(db, `userProfiles/${uid}/pocketMoney`);
+  await runTransaction(pocketMoneyRef, (current: number | null) => {
+    return (current ?? 0) + moneyAmount;
+  });
+
+  // Add history entry
+  const historyRef = push(ref(db, `pocketMoneyHistory/${householdId}`));
+  await set(historyRef, {
+    uid,
+    userName,
+    xpAmount,
+    moneyAmount,
+    rate,
+    createdAt: Date.now(),
+  });
+}
+
+export function subscribeToPocketMoneyHistory(
+  householdId: string,
+  callback: (entries: PocketMoneyEntry[]) => void
+): Unsubscribe {
+  const historyRef = ref(db, `pocketMoneyHistory/${householdId}`);
+  return onValue(historyRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback([]);
+      return;
+    }
+    const entries: PocketMoneyEntry[] = [];
+    snapshot.forEach((child) => {
+      entries.push({ id: child.key!, ...child.val() } as PocketMoneyEntry);
+    });
+    callback(entries);
+  });
+}
+
+// ─── XP Transfer ─────────────────────────────────────────────────
+
+export async function transferXp(
+  householdId: string,
+  fromUid: string,
+  fromName: string,
+  toUid: string,
+  toName: string,
+  amount: number,
+  rewardId: string,
+  rewardTitle: string
+) {
+  // Atomically deduct from sender
+  const fromRef = ref(db, `userProfiles/${fromUid}/totalPoints`);
+  const result = await runTransaction(fromRef, (current: number | null) => {
+    const points = current ?? 0;
+    if (points < amount) return; // Abort
+    return points - amount;
+  });
+
+  if (!result.committed) {
+    throw new Error("Nicht genügend Punkte");
+  }
+
+  // Add to recipient
+  const toRef = ref(db, `userProfiles/${toUid}/totalPoints`);
+  await runTransaction(toRef, (current: number | null) => {
+    return (current ?? 0) + amount;
+  });
+
+  // Log transfer
+  const transferRef = push(ref(db, `xpTransfers/${householdId}`));
+  await set(transferRef, {
+    fromUid,
+    fromName,
+    toUid,
+    toName,
+    amount,
+    rewardId,
+    rewardTitle,
+    createdAt: Date.now(),
+  });
+}
+
+export function subscribeToXpTransfers(
+  householdId: string,
+  callback: (transfers: XpTransfer[]) => void
+): Unsubscribe {
+  const transfersRef = ref(db, `xpTransfers/${householdId}`);
+  return onValue(transfersRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback([]);
+      return;
+    }
+    const transfers: XpTransfer[] = [];
+    snapshot.forEach((child) => {
+      transfers.push({ id: child.key!, ...child.val() } as XpTransfer);
+    });
+    callback(transfers);
+  });
 }

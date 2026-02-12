@@ -3,6 +3,7 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/store/app-store";
+import { useRole } from "@/hooks/use-role";
 import {
   createChore,
   updateChore,
@@ -18,7 +19,7 @@ interface ChoreFormProps {
   existingChore?: Chore;
 }
 
-const pointsOptions = [5, 10, 15, 20, 25];
+const pointsPresets = [5, 10, 25, 50, 100];
 const frequencyOptions: { value: ChoreFrequency; label: string }[] = [
   { value: "daily", label: "Täglich" },
   { value: "weekly", label: "Wöchentlich" },
@@ -30,6 +31,13 @@ export function ChoreForm({ existingChore }: ChoreFormProps) {
   const user = useAppStore((s) => s.user);
   const userProfile = useAppStore((s) => s.userProfile);
   const householdMembers = useAppStore((s) => s.householdMembers);
+  const { isAdmin } = useRole();
+
+  useEffect(() => {
+    if (!isAdmin && user) {
+      router.replace("/dashboard");
+    }
+  }, [isAdmin, user, router]);
 
   const [title, setTitle] = useState(existingChore?.title || "");
   const [description, setDescription] = useState(
@@ -123,7 +131,7 @@ export function ChoreForm({ existingChore }: ChoreFormProps) {
           Punkte (XP)
         </label>
         <div className="flex gap-2">
-          {pointsOptions.map((p) => (
+          {pointsPresets.map((p) => (
             <button
               key={p}
               type="button"
@@ -138,6 +146,14 @@ export function ChoreForm({ existingChore }: ChoreFormProps) {
             </button>
           ))}
         </div>
+        <Input
+          type="number"
+          min={1}
+          value={points}
+          onChange={(e) => setPoints(Math.max(1, parseInt(e.target.value) || 1))}
+          placeholder="Beliebige Punktzahl"
+          className="mt-1"
+        />
       </div>
 
       <div className="flex flex-col gap-1">

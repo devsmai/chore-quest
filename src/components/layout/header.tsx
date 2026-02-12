@@ -1,12 +1,14 @@
 "use client";
 
 import { useAppStore } from "@/store/app-store";
+import { useRole } from "@/hooks/use-role";
 import { logoutUser } from "@/lib/auth-service";
 import { Button } from "@/components/ui/button";
 
 export function Header() {
   const household = useAppStore((s) => s.household);
   const user = useAppStore((s) => s.user);
+  const { role, isAdmin } = useRole();
 
   return (
     <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/80">
@@ -15,13 +17,24 @@ export function Header() {
           <h1 className="truncate text-lg font-bold text-zinc-900 dark:text-zinc-50">
             {household?.name || "Chore Quest"}
           </h1>
-          {household?.inviteCode && (
+          {isAdmin && household?.inviteCode && (
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               Code: {household.inviteCode}
             </p>
           )}
         </div>
         <div className="flex items-center gap-2">
+          {role && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                isAdmin
+                  ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                  : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+              }`}
+            >
+              {isAdmin ? "Admin" : "Mitglied"}
+            </span>
+          )}
           <span className="text-sm text-zinc-500 dark:text-zinc-400">
             {user?.displayName?.split(" ")[0]}
           </span>

@@ -9,6 +9,11 @@ import {
   subscribeToHousehold,
   subscribeToHouseholdMembers,
   subscribeToChores,
+  subscribeToChoreHistory,
+  subscribeToRewards,
+  subscribeToRedemptions,
+  subscribeToPocketMoneyHistory,
+  subscribeToXpTransfers,
 } from "@/lib/firebase-service";
 import type { Unsubscribe } from "firebase/database";
 
@@ -17,12 +22,18 @@ export function useAuth() {
     user,
     isLoading,
     userProfile,
+    household,
     setUser,
     setLoading,
     setUserProfile,
     setHousehold,
     setHouseholdMembers,
     setChores,
+    setChoreHistory,
+    setRewards,
+    setRedemptions,
+    setPocketMoneyHistory,
+    setXpTransfers,
     reset,
   } = useAppStore();
 
@@ -65,28 +76,51 @@ export function useAuth() {
       setHousehold(null);
       setHouseholdMembers({});
       setChores([]);
+      setChoreHistory([]);
+      setRewards([]);
+      setRedemptions([]);
+      setPocketMoneyHistory([]);
+      setXpTransfers([]);
       return;
     }
 
     const householdId = userProfile.householdId;
+    const createdBy = household?.createdBy ?? "";
 
     const unsubHousehold = subscribeToHousehold(householdId, setHousehold);
     const unsubMembers = subscribeToHouseholdMembers(
       householdId,
+      createdBy,
       setHouseholdMembers
     );
     const unsubChores = subscribeToChores(householdId, setChores);
+    const unsubChoreHistory = subscribeToChoreHistory(householdId, setChoreHistory);
+    const unsubRewards = subscribeToRewards(householdId, setRewards);
+    const unsubRedemptions = subscribeToRedemptions(householdId, setRedemptions);
+    const unsubPocketMoney = subscribeToPocketMoneyHistory(householdId, setPocketMoneyHistory);
+    const unsubXpTransfers = subscribeToXpTransfers(householdId, setXpTransfers);
 
     return () => {
       unsubHousehold();
       unsubMembers();
       unsubChores();
+      unsubChoreHistory();
+      unsubRewards();
+      unsubRedemptions();
+      unsubPocketMoney();
+      unsubXpTransfers();
     };
   }, [
     userProfile?.householdId,
+    household?.createdBy,
     setHousehold,
     setHouseholdMembers,
     setChores,
+    setChoreHistory,
+    setRewards,
+    setRedemptions,
+    setPocketMoneyHistory,
+    setXpTransfers,
   ]);
 
   return { user, isLoading, userProfile };

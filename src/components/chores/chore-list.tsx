@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAppStore } from "@/store/app-store";
+import { useRole } from "@/hooks/use-role";
 import { ChoreCard } from "@/components/chores/chore-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ type Filter = "all" | "open" | "done" | "mine";
 export function ChoreList() {
   const chores = useAppStore((s) => s.chores);
   const user = useAppStore((s) => s.user);
+  const { isAdmin } = useRole();
   const [filter, setFilter] = useState<Filter>("open");
 
   const filtered = chores.filter((chore) => {
@@ -61,7 +63,7 @@ export function ChoreList() {
               : "Erstelle eine neue Aufgabe, um loszulegen!"
           }
         >
-          {filter !== "done" && (
+          {filter !== "done" && isAdmin && (
             <Link href="/chores/new">
               <Button size="sm">Aufgabe erstellen</Button>
             </Link>

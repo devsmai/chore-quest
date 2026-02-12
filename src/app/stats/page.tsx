@@ -8,6 +8,7 @@ import { PointsDisplay } from "@/components/stats/points-display";
 import { StreakDisplay } from "@/components/stats/streak-display";
 import { Leaderboard } from "@/components/stats/leaderboard";
 import { StatsSummary } from "@/components/stats/stats-summary";
+import { PocketMoneyStats } from "@/components/stats/pocket-money-stats";
 
 export default function StatsPage() {
   const userProfile = useAppStore((s) => s.userProfile);
@@ -33,6 +34,7 @@ export default function StatsPage() {
 
           <StatsSummary />
           <Leaderboard />
+          <PocketMoneyStats />
         </main>
         <NavBar />
       </div>
